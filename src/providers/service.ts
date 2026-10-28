@@ -1,16 +1,29 @@
-﻿import {
+﻿
+import ExcelJS from "exceljs";
+import {
   existsSync,
+  mkdirSync,
   readFileSync,
-  readdirSync
+  readdirSync,
 } from "node:fs";
-import { resolve, join } from "node:path";
+import { join, resolve } from "node:path";
 
 const ROOT = resolve(process.cwd(), "fixtures");
 const CASES_DIR = join(ROOT, "casos");
 const REPOSITORY_DIR = join(ROOT, "repositorio");
 const SUPPORTS_DIR = join(REPOSITORY_DIR, "soportes");
 
-type AnyRecord = Record<string, any>;
+type JsonRecord = Record<string, unknown>;
+
+type TemplateItem = {
+  etiqueta?: string;
+  obligatorio?: boolean;
+  hoja?: string;
+  celda_valor?: string;
+  celda_etiqueta?: string;
+};
+
+type FieldStatus = "lleno" | "faltante" | "requiere_confirmacion";
 
 function readJson<T>(filePath: string): T {
   if (!existsSync(filePath)) {
@@ -29,22 +42,24 @@ function normalizeLabel(value: string): string {
     .trim();
 }
 
-function getValueByPath(source: AnyRecord, path: string): unknown {
+function getValueByPath(source: JsonRecord, path: string): unknown {
   return path.split(".").reduce<unknown>((current, key) => {
     if (
       current === null ||
       typeof current !== "object" ||
-      !(key in current)
+      Array.isArray(current)
     ) {
       return undefined;
     }
 
-    return (current as AnyRecord)[key];
+    return (current as JsonRecord)[key];
   }, source);
 }
 
 function listCaseIds(): string[] {
-  return readdirSync(CASES_DIR, { withFileTypes: true })
+  return readdirSync(CASES_DIR, {
+    withFileTypes: true,
+  })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
@@ -56,29 +71,26 @@ function loadCase(id: string) {
   }
 
   const directory = join(CASES_DIR, id);
-  const solicitud = readJson<AnyRecord>(
-    join(directory, "solicitud.json")
-  );
+  const solicitud = readJson<JsonRecord>(join(directory, "solicitud.json"));
 
   const supportRequirements = readJson<string[]>(
-    join(directory, "soportes-exigidos.json")
+    join(directory, "soportes-exigidos.json"),
   );
 
   const cellTemplatePath = join(directory, "plantilla-celdas.json");
   const fieldTemplatePath = join(directory, "plantilla-campos.json");
 
-  let template: AnyRecord[];
+  let template: TemplateItem[];
   let templateType: "celdas" | "campos";
 
   if (existsSync(cellTemplatePath)) {
-    template = readJson<AnyRecord[]>(cellTemplatePath);
+    template = readJson<TemplateItem[]>(cellTemplatePath);
     templateType = "celdas";
   } else if (existsSync(fieldTemplatePath)) {
-    template = readJson<AnyRecord[]>(fieldTemplatePath);
+    template = readJson<TemplateItem[]>(fieldTemplatePath);
     templateType = "campos";
   } else {
-    template = [];
-    templateType = "campos";
+    throw new Error(`El caso "${id}" no contiene una plantilla reconocida.`);
   }
 
   return {
@@ -87,7 +99,7 @@ function loadCase(id: string) {
     solicitud,
     supportRequirements,
     template,
-    templateType
+    templateType,
   };
 }
 
@@ -105,7 +117,7 @@ export function listarCasos() {
       asunto: solicitud.asunto,
       cantidadCampos: template.length,
       cantidadSoportesExigidos: supportRequirements.length,
-      tipoPlantilla: templateType
+      tipoPlantilla: templateType,
     };
   });
 }
@@ -118,52 +130,80 @@ export function obtenerCaso(id: string) {
     solicitud: caso.solicitud,
     plantilla: caso.template,
     tipoPlantilla: caso.templateType,
-    soportesExigidos: caso.supportRequirements
+    soportesExigidos: caso.supportRequirements,
   };
 }
 
+function isEmpty(value: unknown): boolean {
+  return value === undefined || value === null || value === "";
+}
+
+function isTaxIdentifier(label: string): boolean {
+  const normalized = normalizeLabel(label);
+
+  return [
+    "nit",
+    "ruc",
+    "rtn",
+    "identificacion tributaria",
+    "numero de identificacion fiscal",
+  ].includes(normalized);
+}
+
 function mapFields(
-  template: AnyRecord[],
+  template: TemplateItem[],
   templateType: "celdas" | "campos",
   glossary: Record<string, string>,
-  master: AnyRecord
+  master: JsonRecord,
+  country: string,
 ) {
   const normalizedGlossary = new Map(
-    Object.entries(glossary).map(([label, key]) => [
+    Object.entries(glossary).map(([label, path]) => [
       normalizeLabel(label),
-      key
-    ])
+      path,
+    ]),
   );
 
   const fields = template.map((item) => {
     const label = String(item.etiqueta ?? "");
     const key = normalizedGlossary.get(normalizeLabel(label)) ?? null;
-    const value = key ? getValueByPath(master, key) : undefined;
+
+    const rawValue = key ? getValueByPath(master, key) : undefined;
+
     const required =
       templateType === "campos" ? item.obligatorio === true : null;
 
-    let status: "completado" | "faltante" | "sin_mapeo";
+    let status: FieldStatus;
+    let note: string | undefined;
 
     if (!key) {
-      status = "sin_mapeo";
-    } else if (
-      value === undefined ||
-      value === null ||
-      value === ""
-    ) {
+      status = "requiere_confirmacion";
+      note = "No se encontró correspondencia para este campo en el glosario.";
+    } else if (isEmpty(rawValue)) {
       status = "faltante";
+      note =
+        "El campo tiene correspondencia en el glosario, pero no se encontró un valor en el maestro.";
+    } else if (country !== "CO" && isTaxIdentifier(label)) {
+      status = "requiere_confirmacion";
+      note =
+        "El maestro contiene un identificador tributario colombiano. Debe confirmarse el identificador válido para el país de destino.";
     } else {
-      status = "completado";
+      status = "lleno";
     }
+
+    const value = isEmpty(rawValue) ? null : rawValue;
 
     return {
       etiqueta: label,
       campoMaestro: key,
-      valor: value ?? null,
+      rutaMaestro: key ? `maestro.${key}` : null,
+      valor: value,
       obligatorio: required,
       estado: status,
+      ...(note ? { observacion: note } : {}),
       ...(item.hoja ? { hoja: item.hoja } : {}),
-      ...(item.celda_valor ? { celdaValor: item.celda_valor } : {})
+      ...(item.celda_valor ? { celdaValor: item.celda_valor } : {}),
+      ...(item.celda_etiqueta ? { celdaEtiqueta: item.celda_etiqueta } : {}),
     };
   });
 
@@ -171,22 +211,15 @@ function mapFields(
   const advertencias: string[] = [];
 
   for (const field of fields) {
-    if (field.obligatorio === true && field.estado !== "completado") {
+    if (field.obligatorio === true && field.estado !== "lleno") {
       bloqueos.push(
-        field.estado === "sin_mapeo"
-          ? `El campo obligatorio "${field.etiqueta}" no tiene correspondencia en el glosario.`
-          : `Falta el valor del campo obligatorio "${field.etiqueta}".`
+        `El campo obligatorio "${field.etiqueta}" requiere atención: ${field.estado}.`,
       );
-    } else if (field.estado === "sin_mapeo") {
+    } else if (field.estado === "requiere_confirmacion") {
+      advertencias.push(`El campo "${field.etiqueta}" requiere confirmación.`);
+    } else if (field.estado === "faltante" && field.obligatorio !== false) {
       advertencias.push(
-        `No se encontró correspondencia en el glosario para "${field.etiqueta}".`
-      );
-    } else if (
-      field.estado === "faltante" &&
-      field.obligatorio !== false
-    ) {
-      advertencias.push(
-        `No se encontró un valor maestro para "${field.etiqueta}".`
+        `No se encontró un valor maestro para "${field.etiqueta}".`,
       );
     }
   }
@@ -194,70 +227,77 @@ function mapFields(
   return { fields, bloqueos, advertencias };
 }
 
-function validateSupports(
-  requiredTypes: string[],
-  country: string
-) {
-  const index = readJson<AnyRecord[]>(
-    join(SUPPORTS_DIR, "index.json")
-  );
+function validateSupports(requiredTypes: string[], country: string) {
+  const index = readJson<JsonRecord[]>(join(SUPPORTS_DIR, "index.json"));
 
   const today = new Date().toISOString().slice(0, 10);
+
   const results = requiredTypes.map((type) => {
     const entry = index.find(
-      (item) =>
-        item.tipo === type &&
-        item.pais_emisor === country
+      (item) => item.tipo === type && item.pais_emisor === country,
     );
 
     if (!entry) {
       return {
         tipo: type,
         estado: "faltante",
-        detalle: `No hay un soporte registrado para "${type}" emitido en ${country}.`
+        detalle: `No hay un soporte registrado para "${type}" emitido en ${country}.`,
       };
     }
 
-    const filePath = join(SUPPORTS_DIR, entry.archivo);
+    const filename = typeof entry.archivo === "string" ? entry.archivo : "";
+
+    if (!filename) {
+      return {
+        tipo: type,
+        estado: "faltante",
+        detalle: "El índice no contiene un nombre de archivo válido.",
+      };
+    }
+
+    const filePath = join(SUPPORTS_DIR, filename);
 
     if (!existsSync(filePath)) {
       return {
         tipo: type,
-        archivo: entry.archivo,
+        archivo: filename,
         estado: "faltante",
-        detalle: "El índice referencia un archivo que no existe."
+        detalle: "El índice referencia un archivo que no existe.",
       };
     }
 
     const content = readFileSync(filePath, "utf8");
-    const expiry = entry.vigencia_hasta as string | null;
+    const expiry =
+      typeof entry.vigencia_hasta === "string" ? entry.vigencia_hasta : null;
 
     if (expiry && expiry < today) {
       return {
         tipo: type,
-        archivo: entry.archivo,
+        archivo: filename,
         vigenciaHasta: expiry,
         estado: "vencido",
-        detalle: `El soporte venció el ${expiry}.`
+        detalle: `El soporte venció el ${expiry}.`,
       };
     }
 
     if (content.includes("PLACEHOLDER DE SOPORTE")) {
       return {
         tipo: type,
-        archivo: entry.archivo,
+        archivo: filename,
         vigenciaHasta: expiry,
         estado: "no_verificable",
-        detalle: "El archivo es un marcador ficticio, no un documento real verificable."
+        detalle:
+          "El archivo es un marcador ficticio, no un documento real verificable.",
       };
     }
 
     return {
       tipo: type,
-      archivo: entry.archivo,
+      archivo: filename,
       vigenciaHasta: expiry,
       estado: "vigente",
-      detalle: "Existe un archivo y no se detectó vencimiento en sus metadatos."
+      detalle:
+        "Existe un archivo y no se detectó vencimiento en sus metadatos.",
     };
   });
 
@@ -270,51 +310,142 @@ function validateSupports(
 
 export function validarCaso(id: string) {
   const caso = loadCase(id);
+
   const glossary = readJson<Record<string, string>>(
-    join(ROOT, "glosario-campos.json")
+    join(ROOT, "glosario-campos.json"),
   );
-  const master = readJson<AnyRecord>(
-    join(REPOSITORY_DIR, "maestro.json")
-  );
+
+  const master = readJson<JsonRecord>(join(REPOSITORY_DIR, "maestro.json"));
+
+  const country = String(caso.solicitud.pais ?? "");
 
   const mapping = mapFields(
     caso.template,
     caso.templateType,
     glossary,
-    master
+    master,
+    country,
   );
 
-  const supportValidation = validateSupports(
-    caso.supportRequirements,
-    String(caso.solicitud.pais)
-  );
+  const supportValidation = validateSupports(caso.supportRequirements, country);
 
-  const bloqueos = [
-    ...mapping.bloqueos,
-    ...supportValidation.bloqueos
-  ];
+  const bloqueos = [...mapping.bloqueos, ...supportValidation.bloqueos];
 
   return {
     casoId: id,
     cliente: caso.solicitud.cliente,
-    pais: caso.solicitud.pais,
+    pais: country,
     formato: caso.solicitud.formato,
     fechaEvaluacion: new Date().toISOString(),
     campos: mapping.fields,
     soportes: supportValidation.soportes,
     resumen: {
       totalCampos: mapping.fields.length,
-      camposCompletados: mapping.fields.filter(
-        (field) => field.estado === "completado"
+      camposLlenos: mapping.fields.filter((field) => field.estado === "lleno")
+        .length,
+      camposFaltantes: mapping.fields.filter(
+        (field) => field.estado === "faltante",
       ).length,
-      camposSinMapeo: mapping.fields.filter(
-        (field) => field.estado === "sin_mapeo"
+      camposRequierenConfirmacion: mapping.fields.filter(
+        (field) => field.estado === "requiere_confirmacion",
       ).length,
       soportesExigidos: caso.supportRequirements.length,
-      soportesBloqueantes: supportValidation.bloqueos.length
+      soportesBloqueantes: supportValidation.bloqueos.length,
     },
     bloqueos,
     advertencias: mapping.advertencias,
-    listoParaFirma: bloqueos.length === 0
+    listoParaFirma: bloqueos.length === 0,
+  };
+}
+
+/**
+ * Genera el formulario Excel para los casos que definen
+ * ubicaciones explícitas de hoja y celda.
+ *
+ * La generación del archivo no implica que el paquete
+ * esté aprobado para firma ni que los soportes sean válidos.
+ */
+export async function generarFormularioExcel(id: string) {
+  const caso = loadCase(id);
+
+  if (caso.templateType !== "celdas") {
+    throw new Error(
+      `El caso "${id}" no dispone de una plantilla de celdas para generar el Excel con posiciones exactas.`,
+    );
+  }
+
+  const glossary = readJson<Record<string, string>>(
+    join(ROOT, "glosario-campos.json"),
+  );
+
+  const master = readJson<JsonRecord>(join(REPOSITORY_DIR, "maestro.json"));
+
+  const country = String(caso.solicitud.pais ?? "");
+
+  const mapping = mapFields(
+    caso.template,
+    caso.templateType,
+    glossary,
+    master,
+    country,
+  );
+
+  const workbook = new ExcelJS.Workbook();
+
+  workbook.creator = "Agente de registro de proveedores";
+  workbook.created = new Date();
+
+  for (const field of mapping.fields) {
+    if (!field.hoja || !field.celdaValor) {
+      throw new Error(
+        `La plantilla contiene una ubicación incompleta para "${field.etiqueta}".`,
+      );
+    }
+
+    let worksheet = workbook.getWorksheet(field.hoja);
+
+    if (!worksheet) {
+      worksheet = workbook.addWorksheet(field.hoja);
+    }
+
+    if (field.celdaEtiqueta) {
+      worksheet.getCell(field.celdaEtiqueta).value = field.etiqueta;
+    }
+
+    const cell = worksheet.getCell(field.celdaValor);
+    const value = field.valor;
+
+    if (value === null || value === undefined) {
+      cell.value = "";
+    } else if (typeof value === "object") {
+      cell.value = JSON.stringify(value);
+    } else {
+      cell.value = String(value);
+    }
+  }
+
+  for (const worksheet of workbook.worksheets) {
+    worksheet.getColumn("B").width = 34;
+    worksheet.getColumn("C").width = 42;
+  }
+
+  const outputDirectory = join(process.cwd(), "out", id);
+
+  mkdirSync(outputDirectory, { recursive: true });
+
+  const outputPath = join(outputDirectory, "formulario.xlsx");
+
+  await workbook.xlsx.writeFile(outputPath);
+
+  return {
+    ok: true,
+    casoId: id,
+    archivo: outputPath,
+    hojas: workbook.worksheets.map((worksheet) => worksheet.name),
+    camposEscritos: mapping.fields.length,
+    camposRequierenConfirmacion: mapping.fields.filter(
+      (field) => field.estado === "requiere_confirmacion",
+    ).length,
+    advertencias: mapping.advertencias,
   };
 }
