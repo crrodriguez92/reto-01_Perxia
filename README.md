@@ -1,66 +1,174 @@
-# Reto técnico 03 — Agente conversacional para órdenes de compra SAP
+﻿# Perxia - Agente de registro de proveedores
 
-## 1. Descripción del proyecto
+## 1. Descripción
 
-Este proyecto tiene como objetivo desarrollar un agente conversacional para apoyar la gestión de solicitudes de órdenes de compra SAP mediante la validación de información, la aplicación de reglas de negocio, la identificación de excepciones y la preparación de órdenes de compra a través de un adaptador SAP simulado.
+Aplicación en desarrollo para apoyar el registro y la prevalidación de proveedores mediante un backend en Node.js y TypeScript.
 
-La solución contempla una interfaz web para consultar solicitudes y ejecutar validaciones, un backend para procesar la información y un agente de inteligencia artificial que permitirá interactuar con las herramientas de negocio mediante lenguaje natural.
+El sistema consulta casos ficticios de registro, relaciona los campos de las plantillas con un maestro de proveedores y valida los soportes documentales disponibles. El objetivo es facilitar la identificación de información faltante, documentos vencidos y situaciones que requieren revisión humana.
 
-El proyecto se encuentra en desarrollo incremental. Actualmente dispone de una interfaz web inicial, un backend en Express y una implementación parcial de las reglas de validación. La integración del modelo de lenguaje, el ciclo conversacional y la creación de órdenes mediante el adaptador SAP simulado están pendientes de completar y validar.
+## 2. Funcionalidades implementadas
 
-## 2. Objetivos
+- Consulta de los casos de registro disponibles.
+- Consulta del detalle de un caso.
+- Mapeo de campos de las plantillas al maestro de proveedores.
+- Identificación de campos completados, faltantes y sin mapeo.
+- Validación del estado de los soportes documentales.
+- Identificación de bloqueos y advertencias.
+- Endpoint de salud para comprobar el funcionamiento del backend.
 
-- Consultar y analizar solicitudes de órdenes de compra.
-- Validar proveedores, aprobaciones, centros de costo, importes y demás condiciones de negocio.
-- Identificar información incompleta y valores que puedan derivarse de los maestros disponibles.
-- Diferenciar entre errores bloqueantes y excepciones que requieren confirmación humana.
-- Preparar la información estructurada para la creación de órdenes de compra.
-- Registrar los resultados de validación y las excepciones para facilitar la trazabilidad.
-- Incorporar un agente conversacional que permita interactuar con las herramientas mediante lenguaje natural.
+Los datos y soportes de este prototipo son ficticios. Los archivos marcados como placeholders no se consideran documentos reales verificables.
 
-## 3. Tecnologías utilizadas
+## 3. Tecnologías
 
-| Tecnología | Uso |
-|---|---|
-| Node.js 20 o superior | Entorno de ejecución del backend. |
-| TypeScript | Desarrollo con tipado estático. |
-| Express | Implementación de los endpoints HTTP. |
-| Zod | Validación y definición de esquemas de datos. |
-| HTML, CSS y JavaScript | Interfaz web inicial. |
-| Git y GitHub | Control de versiones y alojamiento del código. |
-| Render | Plataforma prevista para el despliegue público. |
+- Node.js
+- TypeScript
+- Express
+- Zod
+- Google GenAI SDK
+- Anthropic SDK
+- Git y GitHub
+- Render
 
-La integración de un proveedor y modelo de lenguaje se definirá durante la implementación del agente conversacional.
+La presencia de los SDK de modelos de lenguaje en las dependencias no implica que la integración conversacional esté terminada. Esta se desarrollará y validará por etapas.
 
-## 4. Arquitectura y estructura del proyecto
-
-La estructura principal del repositorio es la siguiente:
+## 4. Estructura principal
 
 ```text
-Reto03-Cristian_Rodriguez/
+reto-01/
 ├── fixtures/
-│   ├── maestros/
-│   └── solicitudes/
-│       ├── sol-001/
-│       ├── sol-002/
-│       ├── sol-003/
-│       ├── sol-004/
-│       ├── sol-005/
-│       └── sol-006/
-├── public/
-│   └── index.html
+│   ├── casos/
+│   ├── repositorio/
+│   └── glosario-campos.json
+├── scripts/
 ├── src/
-│   ├── server.ts
-│   ├── tools/
-│   │   └── oc.ts
-│   ├── llm/
-│   └── sap/
-├── demo.ts
+│   ├── providers/
+│   └── server.ts
+├── public/
 ├── package.json
+├── package-lock.json
 ├── tsconfig.json
-├── .env.example
-├── .gitignore
+├── render.yaml
 └── README.md
 ```
 
-Los directorios `src/llm/` y `src/sap/` están previstos para alojar la integración del modelo de lenguaje y el adaptador SAP simulado, respectivamente. Su implementación debe completarse como
+## 5. Ejecución local
+
+Requisitos: Node.js y npm compatibles con la configuración del proyecto.
+
+Instalar dependencias:
+
+```bash
+npm ci
+```
+
+Compilar TypeScript:
+
+```bash
+npm run build
+```
+
+Iniciar en modo producción:
+
+```bash
+npm start
+```
+
+Para desarrollo:
+
+```bash
+npm run dev
+```
+
+El servidor utiliza `PORT` cuando está definida y, en caso contrario, el puerto local 3002.
+
+## 6. API disponible
+
+### Comprobar salud
+
+```http
+GET /api/health
+```
+
+### Listar casos
+
+```http
+GET /api/proveedores/casos
+```
+
+### Consultar un caso
+
+```http
+GET /api/proveedores/casos/:id
+```
+
+### Validar un caso
+
+```http
+POST /api/proveedores/casos/:id/validar
+```
+
+Ejemplo de identificador:
+
+```text
+co-industrias-delta
+```
+
+La validación puede devolver campos, soportes, bloqueos, advertencias y el indicador `listoParaFirma`.
+
+Este indicador representa el resultado de las reglas implementadas en el prototipo; no constituye una aprobación real de un proveedor.
+
+## 7. Casos de prueba funcionales
+
+Los fixtures incluyen casos ficticios para:
+
+- Colombia: `co-industrias-delta`
+- Ecuador: `ec-corp-andina`
+- Honduras: `hn-agroexport-sula`
+- Panamá: `pa-logistica-istmo`
+
+Los resultados dependen de los campos definidos en las plantillas y de los soportes presentes en el repositorio local de fixtures.
+
+## 8. Variables de entorno y seguridad
+
+Las variables sensibles deben configurarse en el entorno de ejecución y no deben publicarse en Git.
+
+El archivo `.env` es local y no debe versionarse. No se deben incluir claves de API en el código, el README, los logs ni los commits.
+
+En Render, las claves requeridas por las integraciones se deben configurar mediante Environment del servicio. Solo se añadirán las variables que utilice efectivamente la implementación.
+
+## 9. Despliegue en Render
+
+El archivo `render.yaml` define la configuración inicial del servicio web.
+
+La compilación prevista es:
+
+```bash
+npm ci && npm run build
+```
+
+El comando de inicio es:
+
+```bash
+npm start
+```
+
+El endpoint de comprobación de salud es:
+
+```text
+/api/health
+```
+
+El despliegue automático requiere conectar el repositorio de GitHub a Render y publicar los cambios en la rama configurada.
+
+## 10. Próximas etapas
+
+1. Completar la interfaz web para consultar y validar casos.
+2. Integrar el agente conversacional con el proveedor de IA seleccionado.
+3. Definir herramientas y límites de actuación del agente.
+4. Incorporar pruebas automatizadas para las reglas de negocio y los endpoints.
+5. Validar el despliegue público y el flujo de integración continua.
+6. Mantener la revisión humana para bloqueos documentales y acciones que requieran autorización.
+
+## 11. Alcance y limitaciones
+
+Esta versión es un prototipo de prevalidación con datos ficticios. No certifica la autenticidad de documentos, no aprueba proveedores de forma oficial y no realiza envíos a portales externos.

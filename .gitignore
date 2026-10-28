@@ -1,8 +1,12 @@
 
 node_modules/
 dist/
-out/
 .env
-.env.*
-!.env.example
+out/*
+!out/.gitkeep
 coverage/
+*.log
+.DS_Store
+
+# Respaldos locales: no publicar
+backup-pre-agente-*/
