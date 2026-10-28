@@ -160,15 +160,6 @@ El endpoint de comprobación de salud es:
 
 El despliegue automático requiere conectar el repositorio de GitHub a Render y publicar los cambios en la rama configurada.
 
-## 10. Próximas etapas
-
-1. Completar la interfaz web para consultar y validar casos.
-2. Integrar el agente conversacional con el proveedor de IA seleccionado.
-3. Definir herramientas y límites de actuación del agente.
-4. Incorporar pruebas automatizadas para las reglas de negocio y los endpoints.
-5. Validar el despliegue público y el flujo de integración continua.
-6. Mantener la revisión humana para bloqueos documentales y acciones que requieran autorización.
-
-## 11. Alcance y limitaciones
+## 10. Alcance y limitaciones
 
 Esta versión es un prototipo de prevalidación con datos ficticios. No certifica la autenticidad de documentos, no aprueba proveedores de forma oficial y no realiza envíos a portales externos.
