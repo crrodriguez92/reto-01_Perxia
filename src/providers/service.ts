@@ -365,20 +365,17 @@ export function validarCaso(id: string) {
  * La generación del archivo no implica que el paquete
  * esté aprobado para firma ni que los soportes sean válidos.
  */
+
 export async function generarFormularioExcel(id: string) {
   const caso = loadCase(id);
-
-  if (caso.templateType !== "celdas") {
-    throw new Error(
-      `El caso "${id}" no dispone de una plantilla de celdas para generar el Excel con posiciones exactas.`,
-    );
-  }
 
   const glossary = readJson<Record<string, string>>(
     join(ROOT, "glosario-campos.json"),
   );
 
-  const master = readJson<JsonRecord>(join(REPOSITORY_DIR, "maestro.json"));
+  const master = readJson<JsonRecord>(
+    join(REPOSITORY_DIR, "maestro.json"),
+  );
 
   const country = String(caso.solicitud.pais ?? "");
 
@@ -395,45 +392,102 @@ export async function generarFormularioExcel(id: string) {
   workbook.creator = "Agente de registro de proveedores";
   workbook.created = new Date();
 
-  for (const field of mapping.fields) {
-    if (!field.hoja || !field.celdaValor) {
-      throw new Error(
-        `La plantilla contiene una ubicación incompleta para "${field.etiqueta}".`,
-      );
+  if (caso.templateType === "celdas") {
+    for (const field of mapping.fields) {
+      if (!field.hoja || !field.celdaValor) {
+        throw new Error(
+          `La plantilla contiene una ubicación incompleta para "${field.etiqueta}".`,
+        );
+      }
+
+      let worksheet = workbook.getWorksheet(field.hoja);
+
+      if (!worksheet) {
+        worksheet = workbook.addWorksheet(field.hoja);
+      }
+
+      if (field.celdaEtiqueta) {
+        worksheet.getCell(field.celdaEtiqueta).value =
+          field.etiqueta;
+      }
+
+      const cell = worksheet.getCell(field.celdaValor);
+      const value = field.valor;
+
+      if (value === null || value === undefined) {
+        cell.value = "";
+      } else if (typeof value === "object") {
+        cell.value = JSON.stringify(value);
+      } else {
+        cell.value = String(value);
+      }
+    }
+  } else {
+    const worksheet = workbook.addWorksheet("Datos Proveedor");
+
+    worksheet.columns = [
+      { header: "Campo", key: "etiqueta", width: 38 },
+      { header: "Valor", key: "valor", width: 48 },
+      { header: "Estado", key: "estado", width: 26 },
+      { header: "Observación", key: "observacion", width: 75 },
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+
+    for (const field of mapping.fields) {
+      const value = field.valor;
+
+      worksheet.addRow({
+        etiqueta: field.etiqueta,
+        valor:
+          value === null || value === undefined
+            ? ""
+            : typeof value === "object"
+              ? JSON.stringify(value)
+              : String(value),
+        estado: field.estado,
+        observacion:
+          "observacion" in field &&
+          typeof field.observacion === "string"
+            ? field.observacion
+            : "",
+      });
     }
 
-    let worksheet = workbook.getWorksheet(field.hoja);
-
-    if (!worksheet) {
-      worksheet = workbook.addWorksheet(field.hoja);
-    }
-
-    if (field.celdaEtiqueta) {
-      worksheet.getCell(field.celdaEtiqueta).value = field.etiqueta;
-    }
-
-    const cell = worksheet.getCell(field.celdaValor);
-    const value = field.valor;
-
-    if (value === null || value === undefined) {
-      cell.value = "";
-    } else if (typeof value === "object") {
-      cell.value = JSON.stringify(value);
-    } else {
-      cell.value = String(value);
-    }
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+    worksheet.autoFilter = {
+      from: "A1",
+      to: `D${mapping.fields.length + 1}`,
+    };
   }
 
   for (const worksheet of workbook.worksheets) {
-    worksheet.getColumn("B").width = 34;
-    worksheet.getColumn("C").width = 42;
+    worksheet.eachRow((row) => {
+      row.alignment = {
+        ...row.alignment,
+        vertical: "top",
+        wrapText: true,
+      };
+    });
+
+    if (caso.templateType === "celdas") {
+      worksheet.getColumn("B").width = 34;
+      worksheet.getColumn("C").width = 42;
+    }
   }
 
-  const outputDirectory = join(process.cwd(), "out", id);
+  const outputDirectory = join(
+    process.cwd(),
+    "out",
+    id,
+  );
 
   mkdirSync(outputDirectory, { recursive: true });
 
-  const outputPath = join(outputDirectory, "formulario.xlsx");
+  const outputPath = join(
+    outputDirectory,
+    "formulario.xlsx",
+  );
 
   await workbook.xlsx.writeFile(outputPath);
 
@@ -441,8 +495,17 @@ export async function generarFormularioExcel(id: string) {
     ok: true,
     casoId: id,
     archivo: outputPath,
-    hojas: workbook.worksheets.map((worksheet) => worksheet.name),
+    tipoPlantilla: caso.templateType,
+    hojas: workbook.worksheets.map(
+      (worksheet) => worksheet.name,
+    ),
     camposEscritos: mapping.fields.length,
+    camposLlenos: mapping.fields.filter(
+      (field) => field.estado === "lleno",
+    ).length,
+    camposFaltantes: mapping.fields.filter(
+      (field) => field.estado === "faltante",
+    ).length,
     camposRequierenConfirmacion: mapping.fields.filter(
       (field) => field.estado === "requiere_confirmacion",
     ).length,
